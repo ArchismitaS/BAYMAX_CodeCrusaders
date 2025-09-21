@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Posture & Eye Tracker Website</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        text-align: center;
+        padding: 20px;
+    }
+    #video {
+        border: 2px solid #333;
+        border-radius: 8px;
+    }
+    #alertBox {
+        background: #f44336;
+        color: white;
+        padding: 15px 30px;
+        border-radius: 8px;
+        font-size: 18px;
+        display: none;
+        margin-top: 20px;
+    }
+</style>
+</head>
+<body>
+    <h1>Posture & Eye Tracker Website</h1>
+    <video id="video" width="640" height="480" autoplay muted playsinline></video>
+    <div id="alertBox">Please look at something 20 meters away for 20 seconds to rest your eyes.</div>
+
+    <!-- MediaPipe scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4/pose.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
+
+    <script>
+    const videoElement = document.getElementById('video');
+    const alertBox = document.getElementById('alertBox');
+
+    const WORK_INTERVAL = 20 * 60 * 1000; // 20 minutes
+    const REST_INTERVAL = 20 * 1000;      // 20 seconds
+
+    let workTimer = null;
+    let restTimer = null;
+    let inRestPeriod = false;
+
+    function showRestAlert() {
+        alertBox.style.display = 'block';
+    }
+
+    function hideRestAlert() {
+        alertBox.style.display = 'none';
+    }
+
+    // Calculates eye openness metric from face landmarks
+    function calculateEyeOpenness(landmarks, indices) {
+        const upper = landmarks[indices[1]];
+        const lower = landmarks[indices[5]];
+        return Math.abs(upper.y - lower.y);
+    }
+
+    function startWorkTimer() {
+        if (workTimer) clearTimeout(workTimer);
+        workTimer = setTimeout(() => {
+            inRestPeriod = true;
+            showRestAlert();
+            startRestTimer();
+        }, WORK_INTERVAL);
+    }
+
+    function startRestTimer() {
+        if (restTimer) clearTimeout(restTimer);
+        restTimer = setTimeout(() => {
+            inRestPeriod = false;
+            hideRestAlert();
+            startWorkTimer();
+        }, REST_INTERVAL);
+    }
+
+    function sendPostureData(poseLandmarks) {
+        fetch('http://localhost:5000/posture', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(poseLandmarks)
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log('Posture feedback:', data.feedback);
+        })
+        .catch(err => console.error('Posture send error:', err));
+    }
+
+    function onPoseResults(results) {
+        if (results.poseLandmarks) {
+            sendPostureData(results.poseLandmarks);
+        }
+    }
+
+    function onFaceMeshResults(results) {
+        if (inRestPeriod) return;
+
+        if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+            const landmarks = results.multiFaceLandmarks[0];
+            const leftEyeIndices = [159, 145, 33, 133, 173, 157];
+            const rightEyeIndices = [386, 374, 263, 362, 398, 385];
+
+            const leftEyeOpenness = calculateEyeOpenness(landmarks, leftEyeIndices);
+            const rightEyeOpenness = calculateEyeOpenness(landmarks, rightEyeIndices);
+
+            const threshold = 0.03;
+
+            if (leftEyeOpenness < threshold && rightEyeOpenness < threshold) {
+                // Eyes closed or not looking at screen — reset timer assuming rest break
+                startWorkTimer();
+            }
+        }
+    }
+
+    async function main() {
+        const pose = new Pose({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4/${file}`
+        });
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+        });
+        pose.onResults(onPoseResults);
+
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`
+        });
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+        });
+        faceMesh.onResults(onFaceMeshResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await pose.send({ image: videoElement });
+                await faceMesh.send({ image: videoElement });
+            },
+            width: 640,
+            height: 480,
+        });
+        await camera.start();
+
+        startWorkTimer();
+    }
+
+    main();
+    </script>
+</body>
+</html>
