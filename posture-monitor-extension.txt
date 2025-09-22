@@ -1,0 +1,12 @@
+posture-monitor-extension/
+│-- manifest.json
+│-- background.js
+│-- popup.html
+│-- popup.js
+│-- options.html
+│-- options.js
+│-- content.js
+│-- icons/
+    ├─ icon16.png
+    ├─ icon48.png
+    └─ icon128.png
